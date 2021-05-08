@@ -6,11 +6,18 @@
 #include <LinkedList.h>
 
 #define button D3
+#define INTERVAL_SOS "00h00m15s"
 
-String localTime;//Váriavel que armazenara o horario do NTP.
-char interval[15] = "00h00m15s,"; //
-char connectionPublishingSchedule[10]; //
-boolean flagPublishingSchedule = true; //
+String localTime; //Váriavel que armazenara o horario do NTP.
+char interval[15] = "00h00m15s"; //Intervalo padrão para a verificação de conexão.
+String connectionPublishingSchedule; //Horário para publicar o tópico de verificação de conexão.
+boolean flagPublishingSchedule = true; //Flag para impedir que o horário de publicação seja realizado o tempo inteiro.
+
+int Gx, Gy, Gz; //Valores do giroscópio nos três eixos.
+int Ax, Ay, Az; //Valores do acelerômetro nos três eixos.
+boolean flagAccident = false; //Flag para indicar que ocorreu um acidente.
+String accidentTime; //Horário que os sensores detectaram um acidente.
+String timeSOS; //Horário até que o motorista indique que está bem.
 
 WiFiUDP udp;//Cria um objeto "UDP".
 NTPClient ntp(udp, "b.ntp.br", -3 * 3600, 60000);//Cria um objeto "NTP" com as configurações.
@@ -51,6 +58,67 @@ void callback(char* topic, byte* payload, unsigned int length) {
     
     /*Liberando a matriz alocada dinamicamente.*/
     freeMatrix(data, 10); 
+  } else if(strcmp(topic, "Sensors") == 0) {
+    String temp;
+    
+    /*Alocando dinâmicamente a matriz.*/
+    data = allocateMatrix(6, 6);
+    /*Salvando os dados enviados na publicação na matriz.*/
+    data = readPublicationMQTT(payload, length, data);
+    
+    /*Atribuindo os valores do acelerômetro.*/
+    Ax = atoi(data[0]);
+    Ay = atoi(data[1]);
+    Az = atoi(data[2]);
+    /*Atribuindo os valores do giroscópio.*/
+    Gx = atoi(data[3]);
+    Gy = atoi(data[4]);
+    Gz = atoi(data[5]);
+
+    if(Ay > 380 && Az < 360 && Gy < -20){
+      flagAccident = true;
+
+      accidentTime = localTime;
+      timeSOS = (String) getScheduleWithInterval(INTERVAL_SOS, accidentTime);
+      Serial.println(timeSOS);
+  
+      //Serial.println("Tombou para a esquerda");
+    } else if(Ax < 270 && Az < 360 && Gy > 20){
+      flagAccident = true;
+
+      accidentTime = localTime;
+      timeSOS = (String) getScheduleWithInterval(INTERVAL_SOS, accidentTime);
+      Serial.println(timeSOS);
+  
+      //Serial.println("Tombou para a direita");
+    } else if(Ax < 270 && Az < 360 && Gx > 25 && Gz < 0){
+      flagAccident = true;
+
+      accidentTime = localTime;
+      timeSOS = (String) getScheduleWithInterval(INTERVAL_SOS, accidentTime);
+      Serial.println(timeSOS);
+  
+      //Serial.println("Tombou para trás");
+    } else if(Ax > 380 && Az <360 && Gx < -15 && Gz < 0){
+      flagAccident = true;
+
+      accidentTime = localTime;
+      timeSOS = (String) getScheduleWithInterval(INTERVAL_SOS, accidentTime);
+      Serial.println(timeSOS);
+  
+      //Serial.println("Tombou para frente");
+    } else if(Az < 300 && Gz < 0){
+      flagAccident = true;
+
+      accidentTime = localTime;
+      timeSOS = (String) getScheduleWithInterval(INTERVAL_SOS, accidentTime);
+      Serial.println(timeSOS);
+  
+      //Serial.println("Capotado");
+    } 
+
+    /*Liberando a matriz alocada dinamicamente.*/
+    freeMatrix(data, 6); 
   } else {
     Serial.println("Erro! Tópico não encontrado.");
   }
@@ -95,6 +163,7 @@ void reconnect() {
     if (client.connect("ESPthing")) {
       Serial.println("Conectado!");
       client.subscribe("Interval");
+      client.subscribe("Sensors");
     } else {
       Serial.print("Falhou! Erro:");
       Serial.print(client.state());
@@ -153,11 +222,13 @@ void loop() {
     reconnect();
   }
 
+  /*Salvar o horário para a publicação da verificação de conexão, quando a flag for verdadeira.*/
   if(flagPublishingSchedule){
-    setConnectionPublishingSchedule(interval, localTime);
+    connectionPublishingSchedule = (String) getScheduleWithInterval(interval, localTime);
     flagPublishingSchedule = false;
   }
 
+  /*Publicação do tópico de verificação de conexão.*/
   if(localTime == connectionPublishingSchedule){
     /*Formantando a mensagem do tópico.*/
     sprintf(message, "{\"interval\": %s, \"status\": true,}", interval);
@@ -167,6 +238,56 @@ void loop() {
 
     flagPublishingSchedule = true;
   }
+
+  /*Caso os sensores detectem um acidente.*/
+  if(flagAccident) {
+    //Serial.println("Deu ruim!!!");
+
+    /*Emitindo o alarme (nessa situação, é o LED piscando).*/
+    digitalWrite(LED_BUILTIN, LOW);
+    delay(250);
+    digitalWrite(LED_BUILTIN, HIGH);
+    delay(250);
+
+    /*Caso pressione o botão "Estou bem", o alarme é desativado.*/
+    if(btnVal == 0){
+      delay(250);
+      digitalWrite(LED_BUILTIN, HIGH);
+      
+      flagAccident = false;
+
+      /*Restauração dos sensores para uma situação normal.*/
+      Ax = 0;
+      Ay = 0;
+      Az = 0;
+      Gx = 0;
+      Gy = 0;
+      Gz = 90;
+      
+      // Estou bem!
+    }
+
+    /*Caso passe o horário permitido para indicar que está bem, a emergência é acionada.*/
+    if(localTime == timeSOS){
+      flagAccident = false;
+      
+      digitalWrite(LED_BUILTIN, HIGH);
+
+      /*Restauração dos sensores para uma situação normal.*/
+      Ax = 0;
+      Ay = 0;
+      Az = 0;
+      Gx = 0;
+      Gy = 0;
+      Gz = 90;
+      
+      //Chamar a emergência!
+    }
+  }
+
+  Serial.println(accidentTime);
+  Serial.println(timeSOS);
+  
 
   client.loop();
 }
@@ -193,7 +314,8 @@ char **readPublicationMQTT(byte* payload, unsigned int length, char** response){
 }
 
 /*-- Função para definir o horário que será publicado o tópico para verificar a conexão. --*/
-void setConnectionPublishingSchedule(String data, String localTime){
+char* getScheduleWithInterval(String data, String localTime){
+  char timeEnd[10];
   String interval;
   String temp = "", temp2 = "";
   int intervalSecondsInt, localTimeSecondsInt;
@@ -261,22 +383,24 @@ void setConnectionPublishingSchedule(String data, String localTime){
   }
 
   if(hourEnd < 10){
-    sprintf(connectionPublishingSchedule, "0%d", hourEnd);
+    sprintf(timeEnd, "0%d", hourEnd);
   } else {
-    sprintf(connectionPublishingSchedule, "%d", hourEnd);
+    sprintf(timeEnd, "%d", hourEnd);
   }
 
   if(minutesEnd < 10){
-    sprintf(connectionPublishingSchedule, "%s:0%d", connectionPublishingSchedule, minutesEnd);
+    sprintf(timeEnd, "%s:0%d", timeEnd, minutesEnd);
   } else {
-    sprintf(connectionPublishingSchedule, "%s:%d", connectionPublishingSchedule, minutesEnd);
+    sprintf(timeEnd, "%s:%d", timeEnd, minutesEnd);
   }
 
   if(secondsEnd < 10){
-    sprintf(connectionPublishingSchedule, "%s:0%d", connectionPublishingSchedule, secondsEnd);
+    sprintf(timeEnd, "%s:0%d", timeEnd, secondsEnd);
   } else {
-    sprintf(connectionPublishingSchedule, "%s:%d", connectionPublishingSchedule, secondsEnd);
+    sprintf(timeEnd, "%s:%d", timeEnd, secondsEnd);
   }
+
+  return timeEnd;
 }
 
 /*-- Função para alocar dinamicamente o tamanho da matriz --*/
