@@ -277,7 +277,7 @@ void loop() {
       strcpy(temp, accidentTime.c_str());
       sprintf(message, "{\"event\": \"Pressionou o botão Estou Bem\", \"schedule\": \"%s\"}", temp);
       delay(100);
-      client.publish("historicInTopic", message); 
+      client.publish("dailyHistoricInTopic", message); 
       
       // Estou bem!
     }
@@ -300,7 +300,7 @@ void loop() {
       strcpy(temp, accidentTime.c_str());
       sprintf(message, "{\"event\": \"Houve um acidente\", \"schedule\": \"%s\"}", temp);
       delay(100);
-      client.publish("historicInTopic", message);
+      client.publish("dailyHistoricInTopic", message);
       
       //Chamar a emergência!
     }
