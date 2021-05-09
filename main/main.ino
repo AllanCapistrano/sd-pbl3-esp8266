@@ -45,7 +45,7 @@ void callback(char* topic, byte* payload, unsigned int length) {
     Serial.print((char)payload[i]);
   }
 
-  if(strcmp(topic, "Interval") == 0) {
+  if(strcmp(topic, "intervalOutTopic") == 0) {
     /*Alocando dinâmicamente a matriz.*/
     data = allocateMatrix(1, 10);
     /*Salvando os dados enviados na publicação na matriz.*/
@@ -53,12 +53,19 @@ void callback(char* topic, byte* payload, unsigned int length) {
 
     Serial.println(data[0]); //Apagar!
 
-    /*Alterando o valor do intervalo a partir do enviado pela publicação.*/
-    strcpy(interval, data[0]);
+    if((strchr(data[0], 'h') != NULL && strchr(data[0], 'm') != NULL && strchr(data[0], 's') != NULL)){
+      /*Alterando o valor do intervalo a partir do enviado pela publicação.*/
+      strcpy(interval, data[0]);
+      /*Mensagem de confimação de que o intervalo foi alterado.*/
+      returnMessage("success-interval");
+    } else {
+      /*Mensagem de erro ao tentar alterar o intervalo.*/
+      returnMessage("error-interval");
+    }
     
     /*Liberando a matriz alocada dinamicamente.*/
     freeMatrix(data, 10); 
-  } else if(strcmp(topic, "Sensors") == 0) {
+  } else if(strcmp(topic, "sensorsOutTopic") == 0) {
     String temp;
     
     /*Alocando dinâmicamente a matriz.*/
@@ -81,7 +88,7 @@ void callback(char* topic, byte* payload, unsigned int length) {
       accidentTime = localTime;
       timeSOS = (String) getScheduleWithInterval(INTERVAL_SOS, accidentTime);
       Serial.println(timeSOS);
-  
+      
       //Serial.println("Tombou para a esquerda");
     } else if(Ax < 270 && Az < 360 && Gy > 20){
       flagAccident = true;
@@ -162,8 +169,8 @@ void reconnect() {
     /*Tentativa de conexão MQTT*/
     if (client.connect("ESPthing")) {
       Serial.println("Conectado!");
-      client.subscribe("Interval");
-      client.subscribe("Sensors");
+      client.subscribe("intervalOutTopic");
+      client.subscribe("sensorsOutTopic");
     } else {
       Serial.print("Falhou! Erro:");
       Serial.print(client.state());
@@ -214,7 +221,8 @@ void setup() {
 }
 
 void loop() {
-  char message[40];
+  char message[100];
+  char temp[10];
   int btnVal = digitalRead(button);
   localTime = ntp.getFormattedTime();
   
@@ -234,13 +242,14 @@ void loop() {
     sprintf(message, "{\"interval\": %s, \"status\": true,}", interval);
     
     delay(100);
-    client.publish("Connection", message);
+    client.publish("connectionInTopic", message);
 
     flagPublishingSchedule = true;
   }
 
   /*Caso os sensores detectem um acidente.*/
   if(flagAccident) {
+    
     //Serial.println("Deu ruim!!!");
 
     /*Emitindo o alarme (nessa situação, é o LED piscando).*/
@@ -263,6 +272,12 @@ void loop() {
       Gx = 0;
       Gy = 0;
       Gz = 90;
+
+      /*Publicar um tópico indicando que o usuário pressionou o botão Estou Bem, para salvar no histórico.*/
+      strcpy(temp, accidentTime.c_str());
+      sprintf(message, "{\"event\": \"Pressionou o botão Estou Bem\", \"schedule\": \"%s\"}", temp);
+      delay(100);
+      client.publish("historicInTopic", message); 
       
       // Estou bem!
     }
@@ -280,15 +295,18 @@ void loop() {
       Gx = 0;
       Gy = 0;
       Gz = 90;
+
+      /*Publicar um tópico indicando que houve um acidente, para salvar no histórico.*/
+      strcpy(temp, accidentTime.c_str());
+      sprintf(message, "{\"event\": \"Houve um acidente\", \"schedule\": \"%s\"}", temp);
+      delay(100);
+      client.publish("historicInTopic", message);
       
       //Chamar a emergência!
     }
+
   }
-
-  Serial.println(accidentTime);
-  Serial.println(timeSOS);
   
-
   client.loop();
 }
 
@@ -401,6 +419,16 @@ char* getScheduleWithInterval(String data, String localTime){
   }
 
   return timeEnd;
+}
+
+/*-- Função para retornar a mensagem de erro ou sucesso ao publicar pelo serviço web. --*/
+void returnMessage(String message){
+  delay(100);
+  
+  if(message == "success-interval")
+    client.publish("intervalInTopic", "success");
+  else if(message == "error-lamp")
+    client.publish("intervalInTopic", "error");
 }
 
 /*-- Função para alocar dinamicamente o tamanho da matriz --*/
