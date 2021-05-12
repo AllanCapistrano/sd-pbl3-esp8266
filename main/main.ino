@@ -19,12 +19,14 @@ boolean flagAccident = false; //Flag para indicar que ocorreu um acidente.
 String accidentTime; //Horário que os sensores detectaram um acidente.
 String timeSOS; //Horário até que o motorista indique que está bem.
 
+boolean alarmMode; //Modo do alarme (false = Acidente | true = Furto).
+
 WiFiUDP udp;//Cria um objeto "UDP".
 NTPClient ntp(udp, "b.ntp.br", -3 * 3600, 60000);//Cria um objeto "NTP" com as configurações.
 
 /*-- Credenciais do WiFi --*/
-const char* ssid = "Santos"; /*Nome da Rede WiFi*/
-const char* password = "salmos65"; /*Senha da Rede WiFi*/
+const char* ssid = "sanbel"; /*Nome da Rede WiFi*/
+const char* password = "sanbel09"; /*Senha da Rede WiFi*/
 
 WiFiUDP ntpUDP;
 NTPClient timeClient(ntpUDP, "pool.ntp.org");
@@ -45,7 +47,7 @@ void callback(char* topic, byte* payload, unsigned int length) {
     Serial.print((char)payload[i]);
   }
 
-  if(strcmp(topic, "intervalOutTopic") == 0) {
+  if(strcmp(topic, "intervalOutTopic") == 0 || strcmp(topic, "syncIntervalOutTopic") == 0) {
     /*Alocando dinâmicamente a matriz.*/
     data = allocateMatrix(1, 10);
     /*Salvando os dados enviados na publicação na matriz.*/
@@ -126,6 +128,31 @@ void callback(char* topic, byte* payload, unsigned int length) {
 
     /*Liberando a matriz alocada dinamicamente.*/
     freeMatrix(data, 6); 
+  } else if(strcmp(topic, "alarmOutTopic") == 0 || strcmp(topic, "syncAlarmOutTopic") == 0){
+    /*Alocando dinâmicamente a matriz.*/
+    data = allocateMatrix(1, 1);
+    /*Salvando os dados enviados na publicação na matriz.*/
+    data = readPublicationMQTT(payload, length, data);
+
+    if(strchr(data[0], '0') != NULL || strchr(data[0], '1') != NULL){
+
+      if(data[0][0] == '0'){
+        Serial.println("Acidente");
+        alarmMode = false;
+      } else if(data[0][0] == '1') {
+        Serial.println("Furto");
+        alarmMode = true;
+      }
+      
+      /*Mensagem de confimação de que o alarme foi alterado.*/
+      returnMessage("success-alarm");
+    } else {
+      /*Mensagem de erro ao tentar alterar o alarme.*/
+      returnMessage("error-alarm");
+    }
+   
+    /*Liberando a matriz alocada dinamicamente.*/
+    freeMatrix(data, 1); 
   } else {
     Serial.println("Erro! Tópico não encontrado.");
   }
@@ -170,7 +197,10 @@ void reconnect() {
     if (client.connect("ESPthing")) {
       Serial.println("Conectado!");
       client.subscribe("intervalOutTopic");
-      client.subscribe("sensorsOutTopic");
+      client.subscribe("syncIntervalOutTopic");
+      client.subscribe("alarmOutTopic");
+      client.subscribe("syncAlarmOutTopic");
+      //client.subscribe("sensorsOutTopic");
     } else {
       Serial.print("Falhou! Erro:");
       Serial.print(client.state());
@@ -239,10 +269,10 @@ void loop() {
   /*Publicação do tópico de verificação de conexão.*/
   if(localTime == connectionPublishingSchedule){
     /*Formantando a mensagem do tópico.*/
-    sprintf(message, "{\"interval\": %s, \"status\": true,}", interval);
+    //sprintf(message, "{\"interval\": %s, \"status\": true,}", interval);
     
     delay(100);
-    client.publish("connectionInTopic", message);
+    client.publish("connectionInTopic", "{\"status\": true}");
 
     flagPublishingSchedule = true;
   }
@@ -429,6 +459,10 @@ void returnMessage(String message){
     client.publish("intervalInTopic", "success");
   else if(message == "error-lamp")
     client.publish("intervalInTopic", "error");
+  else if(message == "success-alarm")
+    client.publish("alarmInTopic", "success");
+  else if(message == "error-alarm")
+    client.publish("alarmInTopic", "error");
 }
 
 /*-- Função para alocar dinamicamente o tamanho da matriz --*/
