@@ -265,6 +265,8 @@ void setup() {
   localTime = ntp.getFormattedTime();
 
   Serial.println(localTime);
+
+  
 }
 
 void loop() {
@@ -298,7 +300,11 @@ void loop() {
   if(btnVal == 0 && !flagAccident && !flagTheft){
     delay(250);
     alarmMode = !alarmMode;
-    Serial.println(alarmMode);
+    if(alarmMode){
+      Serial.println("Alarme no modo furto.");
+    } else {
+      Serial.println("Alarme no modo acidente.");
+    }
   }
 
   /*Caso os sensores detectem um acidente.*/
@@ -330,6 +336,12 @@ void loop() {
       sprintf(message, "{\"event\": \"Pressionou o botão Estou Bem\", \"schedule\": \"%s\"}", temp);
       delay(100);
       client.publish("dailyHistoricInTopic", message); 
+
+      /*Salvando o evento na placa*/
+      storageHistoric(temp, "Pressionou o botão Estou Bem");
+
+      /*Leitura do arquivo de histórico diário.*/
+      readDailyHistoricFile();
       
       // Estou bem!
     }
@@ -353,11 +365,18 @@ void loop() {
       sprintf(message, "{\"event\": \"Houve um acidente\", \"schedule\": \"%s\"}", temp);
       delay(100);
       client.publish("dailyHistoricInTopic", message);
+
+      /*Salvando o evento na placa*/
+      storageHistoric(temp, "Houve um acidente");
       
       //Chamar a emergência!
       Serial.println();
       Serial.print("Ligando para a emergência através do número: ");
       Serial.print(ambulance);
+      Serial.println();
+
+      /*Leitura do arquivo de histórico diário.*/
+      readDailyHistoricFile();
     }
 
   }
@@ -390,7 +409,13 @@ void loop() {
       strcpy(temp, eventTime.c_str());
       sprintf(message, "{\"event\": \"Alarme falso para tentativa de furto\", \"schedule\": \"%s\"}", temp);
       delay(100);
-      client.publish("dailyHistoricInTopic", message); 
+      client.publish("dailyHistoricInTopic", message);
+
+      /*Salvando o evento na placa*/
+      storageHistoric(temp, "Alarme falso para tentativa de furto");
+
+      /*Leitura do arquivo de histórico diário.*/
+      readDailyHistoricFile();
       
       // Alarme falso!
     }
@@ -414,11 +439,18 @@ void loop() {
       sprintf(message, "{\"event\": \"Houve uma tentativa de furto\", \"schedule\": \"%s\"}", temp);
       delay(100);
       client.publish("dailyHistoricInTopic", message);
+
+      /*Salvando o evento na placa*/
+      storageHistoric(temp, "Houve uma tentativa de furto");
       
       //Chamar a emergência!
       Serial.println();
       Serial.print("Ligando para a emergência através do número: ");
       Serial.print(police);
+      Serial.println();
+
+      /*Leitura do arquivo de histórico diário.*/
+      readDailyHistoricFile();
     }
   }
   
@@ -548,6 +580,79 @@ void returnMessage(String message){
     client.publish("alarmInTopic", "success");
   else if(message == "error-alarm")
     client.publish("alarmInTopic", "error");
+}
+
+/*-- Função para armazenar os eventos diários na placa --*/
+void storageHistoric(String schedule, String event){
+  File file;
+  String currentDate;
+  String fileDate;
+
+  currentDate = getCurrentDate();
+
+  file = SPIFFS.open("dailyHistoric.txt", "r");
+
+  if(file){
+    fileDate = file.readStringUntil('\n');
+    file.close();
+  } else {
+    file = SPIFFS.open("dailyHistoric.txt", "w");
+
+    file.printf("%s\n\n", currentDate.c_str());
+
+    file.close();
+  }
+
+  if(fileDate == currentDate){
+    file = SPIFFS.open("dailyHistoric.txt", "a");
+
+    if(file){
+      file.printf("%s - %s\n", schedule.c_str(), event.c_str());
+
+      file.close();
+    }
+  } else {
+    file = SPIFFS.open("dailyHistoric.txt", "w");
+
+    if(file){
+      file.printf("%s\n\n", currentDate.c_str());
+      file.printf("%s - %s\n", schedule.c_str(), event.c_str());
+
+      file.close();
+    }
+  }
+}
+
+/*-- Função para realizar a leitura do arquivo de histórico diário. --*/
+void readDailyHistoricFile(){
+  File file;
+  String fileData;
+  
+  file = SPIFFS.open("dailyHistoric.txt", "r");
+
+  if(file){
+    while(file.available()){
+      fileData = file.readStringUntil('\n');
+      Serial.println(fileData);
+    }
+
+    file.close();
+  }
+}
+
+/*-- Função que retorna a data atual. --*/
+String getCurrentDate() {
+  /*Retorna número de segundos decorridos desde 1º de janeiro de 1970*/
+  unsigned long epochTime = timeClient.getEpochTime();
+  struct tm *ptm = gmtime ((time_t *)&epochTime); 
+  
+  int currentDay = ptm->tm_mday;
+  int currentMonth = ptm->tm_mon+1;
+  int currentYear = ptm->tm_year+1900;
+
+  String currentDate = String(currentDay) + "/" + String(currentMonth) + "/" +  String(currentYear);
+  
+  return currentDate;
 }
 
 /*-- Função para alocar dinamicamente o tamanho da matriz --*/
