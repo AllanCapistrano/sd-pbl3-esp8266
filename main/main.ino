@@ -6,7 +6,7 @@
 #include <LinkedList.h>
 
 #define button D3
-#define INTERVAL_SOS "00h00m15s"
+#define INTERVAL_EVENT "00h00m15s"
 
 String localTime; //Váriavel que armazenara o horario do NTP.
 char interval[15] = "00h00m15s"; //Intervalo padrão para a verificação de conexão.
@@ -15,18 +15,24 @@ boolean flagPublishingSchedule = true; //Flag para impedir que o horário de pub
 
 int Gx, Gy, Gz; //Valores do giroscópio nos três eixos.
 int Ax, Ay, Az; //Valores do acelerômetro nos três eixos.
-boolean flagAccident = false; //Flag para indicar que ocorreu um acidente.
-String accidentTime; //Horário que os sensores detectaram um acidente.
-String timeSOS; //Horário até que o motorista indique que está bem.
 
-boolean alarmMode; //Modo do alarme (false = Acidente | true = Furto).
+String eventTime; //Horário que os sensores detectaram um acidente.
+String desativationTime; //Horário até que o motorista indique que está bem.
+
+boolean alarmMode = false; //Modo do alarme (false = Acidente | true = Furto).
+boolean flagAccident = false; //Flag para indicar que ocorreu um acidente.
+boolean flagTheft = false; //Flag para indicar que ocorreu um furto
 
 WiFiUDP udp;//Cria um objeto "UDP".
 NTPClient ntp(udp, "b.ntp.br", -3 * 3600, 60000);//Cria um objeto "NTP" com as configurações.
 
 /*-- Credenciais do WiFi --*/
-const char* ssid = "sanbel"; /*Nome da Rede WiFi*/
-const char* password = "sanbel09"; /*Senha da Rede WiFi*/
+const char* ssid = "Santos"; /*Nome da Rede WiFi*/
+const char* password = "salmos65"; /*Senha da Rede WiFi*/
+
+/*-- Contatos de emergência previamente cadastrados pelo usuário. --*/
+String police = "190";
+String ambulance = "192";
 
 WiFiUDP ntpUDP;
 NTPClient timeClient(ntpUDP, "pool.ntp.org");
@@ -84,47 +90,57 @@ void callback(char* topic, byte* payload, unsigned int length) {
     Gy = atoi(data[4]);
     Gz = atoi(data[5]);
 
-    if(Ay > 380 && Az < 360 && Gy < -20){
+    if(alarmMode){ /*Caso esteja ativado o alarme de furto.*/
+      if((Ax < 270 || Ax > 380) && (Ay < 270 || Ay > 380) && (Az < 360) && (Gx >= 10 || Gx <= -10) && (Gy < 0 || Gy >= 5)){
+        flagTheft = true;
+        eventTime = localTime;
+        desativationTime = (String) getScheduleWithInterval(INTERVAL_EVENT, eventTime);
+        Serial.println(desativationTime);
+      }
+        
+    } else { /*Caso esteja ativado o alarme de acidente.*/
+      if(Ay < 270 && Az < 360 && Gy > 20){
       flagAccident = true;
 
-      accidentTime = localTime;
-      timeSOS = (String) getScheduleWithInterval(INTERVAL_SOS, accidentTime);
-      Serial.println(timeSOS);
+      eventTime = localTime;
+      desativationTime = (String) getScheduleWithInterval(INTERVAL_EVENT, eventTime);
+      Serial.println(desativationTime);
       
       //Serial.println("Tombou para a esquerda");
-    } else if(Ax < 270 && Az < 360 && Gy > 20){
-      flagAccident = true;
-
-      accidentTime = localTime;
-      timeSOS = (String) getScheduleWithInterval(INTERVAL_SOS, accidentTime);
-      Serial.println(timeSOS);
+      } else if(Ay > 380 && Az < 360 && Gy < -20){
+        flagAccident = true;
   
-      //Serial.println("Tombou para a direita");
-    } else if(Ax < 270 && Az < 360 && Gx > 25 && Gz < 0){
-      flagAccident = true;
-
-      accidentTime = localTime;
-      timeSOS = (String) getScheduleWithInterval(INTERVAL_SOS, accidentTime);
-      Serial.println(timeSOS);
+        eventTime = localTime;
+        desativationTime = (String) getScheduleWithInterval(INTERVAL_EVENT, eventTime);
+        Serial.println(desativationTime);
+    
+        //Serial.println("Tombou para a direita");
+      } else if(Ax > 380 && Az < 360 && Gx > 30 && Gz < 0){
+        flagAccident = true;
   
-      //Serial.println("Tombou para trás");
-    } else if(Ax > 380 && Az <360 && Gx < -15 && Gz < 0){
-      flagAccident = true;
-
-      accidentTime = localTime;
-      timeSOS = (String) getScheduleWithInterval(INTERVAL_SOS, accidentTime);
-      Serial.println(timeSOS);
+        eventTime = localTime;
+        desativationTime = (String) getScheduleWithInterval(INTERVAL_EVENT, eventTime);
+        Serial.println(desativationTime);
+    
+        //Serial.println("Tombou para trás");
+      } else if(Ax < 270 && Az <360 && Gx < -20 && Gz < 0){
+        flagAccident = true;
   
-      //Serial.println("Tombou para frente");
-    } else if(Az < 300 && Gz < 0){
-      flagAccident = true;
-
-      accidentTime = localTime;
-      timeSOS = (String) getScheduleWithInterval(INTERVAL_SOS, accidentTime);
-      Serial.println(timeSOS);
+        eventTime = localTime;
+        desativationTime = (String) getScheduleWithInterval(INTERVAL_EVENT, eventTime);
+        Serial.println(desativationTime);
+    
+        //Serial.println("Tombou para frente");
+      } else if(Az < 300 && Gz < 0){
+        flagAccident = true;
   
-      //Serial.println("Capotado");
-    } 
+        eventTime = localTime;
+        desativationTime = (String) getScheduleWithInterval(INTERVAL_EVENT, eventTime);
+        Serial.println(desativationTime);
+    
+        //Serial.println("Capotado");
+      } 
+    }
 
     /*Liberando a matriz alocada dinamicamente.*/
     freeMatrix(data, 6); 
@@ -200,7 +216,7 @@ void reconnect() {
       client.subscribe("syncIntervalOutTopic");
       client.subscribe("alarmOutTopic");
       client.subscribe("syncAlarmOutTopic");
-      //client.subscribe("sensorsOutTopic");
+      client.subscribe("sensorsOutTopic");
     } else {
       Serial.print("Falhou! Erro:");
       Serial.print(client.state());
@@ -247,7 +263,8 @@ void setup() {
   loadCertificates();
 
   localTime = ntp.getFormattedTime();
-  
+
+  Serial.println(localTime);
 }
 
 void loop() {
@@ -277,12 +294,77 @@ void loop() {
     flagPublishingSchedule = true;
   }
 
-  /*Caso os sensores detectem um acidente.*/
-  if(flagAccident) {
-    
-    //Serial.println("Deu ruim!!!");
+  /*Quando apertar o botão, altera o modo do alarme.*/
+  if(btnVal == 0 && !flagAccident && !flagTheft){
+    delay(250);
+    alarmMode = !alarmMode;
+    Serial.println(alarmMode);
+  }
 
-    /*Emitindo o alarme (nessa situação, é o LED piscando).*/
+  /*Caso os sensores detectem um acidente.*/
+  if(flagAccident && !alarmMode) {
+    /*Emitindo o alarme.*/
+    digitalWrite(LED_BUILTIN, LOW);
+    delay(50);
+    digitalWrite(LED_BUILTIN, HIGH);
+    delay(250);
+
+    /*Caso pressione o botão "Estou bem", o alarme é desativado.*/
+    if(btnVal == 0){
+      delay(250);
+      digitalWrite(LED_BUILTIN, HIGH);
+
+      /*Desligando o Led*/
+      flagAccident = false;
+
+      /*Restauração dos sensores para uma possível situação normal.*/
+      Ax = 300;
+      Ay = 300;
+      Az = 400;
+      Gx = 0;
+      Gy = 0;
+      Gz = 90;
+
+      /*Publicar um tópico indicando que o usuário pressionou o botão Estou Bem, para salvar no histórico.*/
+      strcpy(temp, eventTime.c_str());
+      sprintf(message, "{\"event\": \"Pressionou o botão Estou Bem\", \"schedule\": \"%s\"}", temp);
+      delay(100);
+      client.publish("dailyHistoricInTopic", message); 
+      
+      // Estou bem!
+    }
+
+    /*Caso passe o horário permitido para indicar que está bem, a emergência é acionada.*/
+    if(localTime == desativationTime){
+      flagAccident = false;
+      
+      digitalWrite(LED_BUILTIN, HIGH);
+
+      /*Restauração dos sensores para uma possível situação normal.*/
+      Ax = 300;
+      Ay = 300;
+      Az = 400;
+      Gx = 0;
+      Gy = 0;
+      Gz = 90;
+
+      /*Publicar um tópico indicando que houve um acidente, para salvar no histórico.*/
+      strcpy(temp, eventTime.c_str());
+      sprintf(message, "{\"event\": \"Houve um acidente\", \"schedule\": \"%s\"}", temp);
+      delay(100);
+      client.publish("dailyHistoricInTopic", message);
+      
+      //Chamar a emergência!
+      Serial.println();
+      Serial.print("Ligando para a emergência através do número: ");
+      Serial.print(ambulance);
+    }
+
+  }
+
+  /*Caso os sensores detectem um furto.*/
+  if(flagTheft && alarmMode) {
+    /*Emitindo o alarme.*/
     digitalWrite(LED_BUILTIN, LOW);
     delay(250);
     digitalWrite(LED_BUILTIN, HIGH);
@@ -292,49 +374,52 @@ void loop() {
     if(btnVal == 0){
       delay(250);
       digitalWrite(LED_BUILTIN, HIGH);
-      
-      flagAccident = false;
 
-      /*Restauração dos sensores para uma situação normal.*/
-      Ax = 0;
-      Ay = 0;
-      Az = 0;
+      /*Desligando o Led*/
+      flagTheft = false;
+
+      /*Restauração dos sensores para uma possível situação normal.*/
+      Ax = 300;
+      Ay = 300;
+      Az = 400;
       Gx = 0;
       Gy = 0;
       Gz = 90;
 
-      /*Publicar um tópico indicando que o usuário pressionou o botão Estou Bem, para salvar no histórico.*/
-      strcpy(temp, accidentTime.c_str());
-      sprintf(message, "{\"event\": \"Pressionou o botão Estou Bem\", \"schedule\": \"%s\"}", temp);
+      /*Publicar um tópico indicando que o usuário desativou o alrme de furto, para salvar no histórico.*/
+      strcpy(temp, eventTime.c_str());
+      sprintf(message, "{\"event\": \"Alarme falso para tentativa de furto\", \"schedule\": \"%s\"}", temp);
       delay(100);
       client.publish("dailyHistoricInTopic", message); 
       
-      // Estou bem!
+      // Alarme falso!
     }
 
-    /*Caso passe o horário permitido para indicar que está bem, a emergência é acionada.*/
-    if(localTime == timeSOS){
-      flagAccident = false;
+    /*Caso passe o horário permitido para indicar que foi um alarme falso.*/
+    if(localTime == desativationTime){
+      flagTheft = false;
       
       digitalWrite(LED_BUILTIN, HIGH);
 
-      /*Restauração dos sensores para uma situação normal.*/
-      Ax = 0;
-      Ay = 0;
-      Az = 0;
+      /*Restauração dos sensores para uma possível situação normal.*/
+      Ax = 300;
+      Ay = 300;
+      Az = 400;
       Gx = 0;
       Gy = 0;
       Gz = 90;
 
-      /*Publicar um tópico indicando que houve um acidente, para salvar no histórico.*/
-      strcpy(temp, accidentTime.c_str());
-      sprintf(message, "{\"event\": \"Houve um acidente\", \"schedule\": \"%s\"}", temp);
+      /*Publicar um tópico indicando que houve uma tentativa de furto, para salvar no histórico.*/
+      strcpy(temp, eventTime.c_str());
+      sprintf(message, "{\"event\": \"Houve uma tentativa de furto\", \"schedule\": \"%s\"}", temp);
       delay(100);
       client.publish("dailyHistoricInTopic", message);
       
       //Chamar a emergência!
+      Serial.println();
+      Serial.print("Ligando para a emergência através do número: ");
+      Serial.print(police);
     }
-
   }
   
   client.loop();
