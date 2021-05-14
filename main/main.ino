@@ -13,15 +13,22 @@ char interval[15] = "00h00m15s"; //Intervalo padrão para a verificação de con
 String connectionPublishingSchedule; //Horário para publicar o tópico de verificação de conexão.
 boolean flagPublishingSchedule = true; //Flag para impedir que o horário de publicação seja realizado o tempo inteiro.
 
-int Gx, Gy, Gz; //Valores do giroscópio nos três eixos.
-int Ax, Ay, Az; //Valores do acelerômetro nos três eixos.
-
 String eventTime; //Horário que os sensores detectaram um acidente.
 String desativationTime; //Horário até que o motorista indique que está bem.
 
 boolean alarmMode = false; //Modo do alarme (false = Acidente | true = Furto).
 boolean flagAccident = false; //Flag para indicar que ocorreu um acidente.
 boolean flagTheft = false; //Flag para indicar que ocorreu um furto
+
+char character; //Caracteres do terminal.
+char terminalInput[35]; //Valores dos sensores obtidos pelo terminal.
+char delimiter[] = ","; //Delimitador para os valores dos sensores obtidos pelo terminal.
+int j = 0, k = 0; //Variáveis acumuladoras.
+
+/*Sensores: Acelerômetro (A) | Giroscópio (G)*/
+String sensor[6]; // (0) -> Ax | (1) -> Ay | (2) -> Az | (3) -> Gx | (4) -> Gy | (5) -> Gz
+int Ax, Ay, Az; //Valores do acelerômetro nos três eixos.
+int Gx, Gy, Gz; //Valores do giroscópio nos três eixos.
 
 WiFiUDP udp;//Cria um objeto "UDP".
 NTPClient ntp(udp, "b.ntp.br", -3 * 3600, 60000);//Cria um objeto "NTP" com as configurações.
@@ -73,77 +80,6 @@ void callback(char* topic, byte* payload, unsigned int length) {
     
     /*Liberando a matriz alocada dinamicamente.*/
     freeMatrix(data, 10); 
-  } else if(strcmp(topic, "sensorsOutTopic") == 0) {
-    String temp;
-    
-    /*Alocando dinâmicamente a matriz.*/
-    data = allocateMatrix(6, 6);
-    /*Salvando os dados enviados na publicação na matriz.*/
-    data = readPublicationMQTT(payload, length, data);
-    
-    /*Atribuindo os valores do acelerômetro.*/
-    Ax = atoi(data[0]);
-    Ay = atoi(data[1]);
-    Az = atoi(data[2]);
-    /*Atribuindo os valores do giroscópio.*/
-    Gx = atoi(data[3]);
-    Gy = atoi(data[4]);
-    Gz = atoi(data[5]);
-
-    if(alarmMode){ /*Caso esteja ativado o alarme de furto.*/
-      if((Ax < 270 || Ax > 380) && (Ay < 270 || Ay > 380) && (Az < 360) && (Gx >= 10 || Gx <= -10) && (Gy < 0 || Gy >= 5)){
-        flagTheft = true;
-        eventTime = localTime;
-        desativationTime = (String) getScheduleWithInterval(INTERVAL_EVENT, eventTime);
-        Serial.println(desativationTime);
-      }
-        
-    } else { /*Caso esteja ativado o alarme de acidente.*/
-      if(Ay < 270 && Az < 360 && Gy > 20){
-      flagAccident = true;
-
-      eventTime = localTime;
-      desativationTime = (String) getScheduleWithInterval(INTERVAL_EVENT, eventTime);
-      Serial.println(desativationTime);
-      
-      //Serial.println("Tombou para a esquerda");
-      } else if(Ay > 380 && Az < 360 && Gy < -20){
-        flagAccident = true;
-  
-        eventTime = localTime;
-        desativationTime = (String) getScheduleWithInterval(INTERVAL_EVENT, eventTime);
-        Serial.println(desativationTime);
-    
-        //Serial.println("Tombou para a direita");
-      } else if(Ax > 380 && Az < 360 && Gx > 30 && Gz < 0){
-        flagAccident = true;
-  
-        eventTime = localTime;
-        desativationTime = (String) getScheduleWithInterval(INTERVAL_EVENT, eventTime);
-        Serial.println(desativationTime);
-    
-        //Serial.println("Tombou para trás");
-      } else if(Ax < 270 && Az <360 && Gx < -20 && Gz < 0){
-        flagAccident = true;
-  
-        eventTime = localTime;
-        desativationTime = (String) getScheduleWithInterval(INTERVAL_EVENT, eventTime);
-        Serial.println(desativationTime);
-    
-        //Serial.println("Tombou para frente");
-      } else if(Az < 300 && Gz < 0){
-        flagAccident = true;
-  
-        eventTime = localTime;
-        desativationTime = (String) getScheduleWithInterval(INTERVAL_EVENT, eventTime);
-        Serial.println(desativationTime);
-    
-        //Serial.println("Capotado");
-      } 
-    }
-
-    /*Liberando a matriz alocada dinamicamente.*/
-    freeMatrix(data, 6); 
   } else if(strcmp(topic, "alarmOutTopic") == 0 || strcmp(topic, "syncAlarmOutTopic") == 0){
     /*Alocando dinâmicamente a matriz.*/
     data = allocateMatrix(1, 1);
@@ -216,7 +152,6 @@ void reconnect() {
       client.subscribe("syncIntervalOutTopic");
       client.subscribe("alarmOutTopic");
       client.subscribe("syncAlarmOutTopic");
-      client.subscribe("sensorsOutTopic");
     } else {
       Serial.print("Falhou! Erro:");
       Serial.print(client.state());
@@ -270,13 +205,46 @@ void setup() {
 }
 
 void loop() {
-  char message[100];
-  char temp[10];
-  int btnVal = digitalRead(button);
+  char message[100]; //Mensagem que será publicada.
+  char temp[10]; //Variável temporária para a publicação.
+  char *sensorValue; //Valor do sensor.
+  int btnVal = digitalRead(button); //Valor do botão.
+
+  /*Horário atual.*/
   localTime = ntp.getFormattedTime();
   
   if (!client.connected()) {
     reconnect();
+  }
+
+  /*Recebendo os valores dos sensores via terminal.*/
+  if(Serial.available()) {
+    character = Serial.read();
+
+    if(character == 10){ /*Quando chegar no final da String*/
+      k = 0;
+      /*Dividindo a String.*/
+      sensorValue = strtok(terminalInput, delimiter);
+
+      while(sensorValue != NULL){
+        sensor[j] = sensorValue;
+        sensorValue = strtok(NULL, delimiter);
+        j++;
+      }
+
+      /*Chamando a função para verificar os valores dos sensores*/
+      monitorSensors(sensor[0].toInt(), sensor[1].toInt(), sensor[2].toInt(), sensor[3].toInt(), sensor[4].toInt(), sensor[5].toInt());
+      j = 0;
+      
+      /*Apagando os dados lidos do terminal.*/
+      for(int i = 0; i < 25; i++) {
+        terminalInput[i] = NULL;
+      }
+      
+    } else { /*Caso não seja o final da String, concatena os caracteres.*/
+      terminalInput[k] += character;
+      k++;
+    }
   }
 
   /*Salvar o horário para a publicação da verificação de conexão, quando a flag for verdadeira.*/
@@ -287,9 +255,6 @@ void loop() {
 
   /*Publicação do tópico de verificação de conexão.*/
   if(localTime == connectionPublishingSchedule){
-    /*Formantando a mensagem do tópico.*/
-    //sprintf(message, "{\"interval\": %s, \"status\": true,}", interval);
-    
     delay(100);
     client.publish("connectionInTopic", "{\"status\": true}");
 
@@ -300,10 +265,13 @@ void loop() {
   if(btnVal == 0 && !flagAccident && !flagTheft){
     delay(250);
     alarmMode = !alarmMode;
+    
     if(alarmMode){
       Serial.println("Alarme no modo furto.");
+      client.publish("alarmModeInTopic", "{\"mode\": true}");
     } else {
       Serial.println("Alarme no modo acidente.");
+      client.publish("alarmModeInTopic", "{\"mode\": false}");
     }
   }
 
@@ -653,6 +621,55 @@ String getCurrentDate() {
   String currentDate = String(currentDay) + "/" + String(currentMonth) + "/" +  String(currentYear);
   
   return currentDate;
+}
+
+/*-- Função que recebe os valores dos sensores, e verifica se houve um furto ou um acidente. --*/
+void monitorSensors(int Ax, int Ay, int Az, int Gx, int Gy, int Gz){
+  if(alarmMode){ /*Caso esteja ativado o alarme de furto.*/
+      if((Ax < 270 || Ax > 380) && (Ay < 270 || Ay > 380) && (Az < 360) && (Gx >= 10 || Gx <= -10) && (Gy < 0 || Gy >= 5)){ /*Caso ocorra uma tentativa de furto.*/
+        flagTheft = true;
+        eventTime = localTime;
+        desativationTime = (String) getScheduleWithInterval(INTERVAL_EVENT, eventTime);
+      }
+        
+  } else { /*Caso esteja ativado o alarme de acidente.*/
+    if(Ay < 270 && Az < 360 && Gy > 20){
+    flagAccident = true;
+
+    eventTime = localTime;
+    desativationTime = (String) getScheduleWithInterval(INTERVAL_EVENT, eventTime);
+    
+    //Tombou para a esquerda
+    } else if(Ay > 380 && Az < 360 && Gy < -20){
+      flagAccident = true;
+
+      eventTime = localTime;
+      desativationTime = (String) getScheduleWithInterval(INTERVAL_EVENT, eventTime);
+  
+      //Tombou para a direita
+    } else if(Ax > 380 && Az < 360 && Gx > 30 && Gz < 0){
+      flagAccident = true;
+
+      eventTime = localTime;
+      desativationTime = (String) getScheduleWithInterval(INTERVAL_EVENT, eventTime);
+  
+      //Tombou para trás
+    } else if(Ax < 270 && Az <360 && Gx < -20 && Gz < 0){
+      flagAccident = true;
+
+      eventTime = localTime;
+      desativationTime = (String) getScheduleWithInterval(INTERVAL_EVENT, eventTime);
+  
+      //Tombou para frente
+    } else if(Az < 300 && Gz < 0){
+      flagAccident = true;
+
+      eventTime = localTime;
+      desativationTime = (String) getScheduleWithInterval(INTERVAL_EVENT, eventTime);
+  
+      //Capotado
+    } 
+  }
 }
 
 /*-- Função para alocar dinamicamente o tamanho da matriz --*/
