@@ -19,6 +19,7 @@ String desativationTime; //Horário até que o motorista indique que está bem.
 boolean alarmMode = false; //Modo do alarme (false = Acidente | true = Furto).
 boolean flagAccident = false; //Flag para indicar que ocorreu um acidente.
 boolean flagTheft = false; //Flag para indicar que ocorreu um furto
+boolean flagMonitoring = false; //Flag para indicar que os valores dos sensores mudaram.
 
 char character; //Caracteres do terminal.
 char terminalInput[35]; //Valores dos sensores obtidos pelo terminal.
@@ -220,6 +221,8 @@ void loop() {
   /*Recebendo os valores dos sensores via terminal.*/
   if(Serial.available()) {
     character = Serial.read();
+    /*Valores dos sensores mudaram.*/
+    flagMonitoring = true;
 
     if(character == 10){ /*Quando chegar no final da String*/
       k = 0;
@@ -291,14 +294,6 @@ void loop() {
       /*Desligando o Led*/
       flagAccident = false;
 
-      /*Restauração dos sensores para uma possível situação normal.*/
-      Ax = 300;
-      Ay = 300;
-      Az = 400;
-      Gx = 0;
-      Gy = 0;
-      Gz = 90;
-
       /*Publicar um tópico indicando que o usuário pressionou o botão Estou Bem, para salvar no histórico.*/
       strcpy(temp, eventTime.c_str());
       sprintf(message, "{\"event\": \"Pressionou o botão Estou Bem\", \"schedule\": \"%s\"}", temp);
@@ -310,7 +305,8 @@ void loop() {
 
       /*Leitura do arquivo de histórico diário.*/
       readDailyHistoricFile();
-      
+
+      flagMonitoring = false;
       // Estou bem!
     }
 
@@ -319,14 +315,6 @@ void loop() {
       flagAccident = false;
       
       digitalWrite(LED_BUILTIN, HIGH);
-
-      /*Restauração dos sensores para uma possível situação normal.*/
-      Ax = 300;
-      Ay = 300;
-      Az = 400;
-      Gx = 0;
-      Gy = 0;
-      Gz = 90;
 
       /*Publicar um tópico indicando que houve um acidente, para salvar no histórico.*/
       strcpy(temp, eventTime.c_str());
@@ -345,6 +333,8 @@ void loop() {
 
       /*Leitura do arquivo de histórico diário.*/
       readDailyHistoricFile();
+
+      flagMonitoring = false;
     }
 
   }
@@ -365,14 +355,6 @@ void loop() {
       /*Desligando o Led*/
       flagTheft = false;
 
-      /*Restauração dos sensores para uma possível situação normal.*/
-      Ax = 300;
-      Ay = 300;
-      Az = 400;
-      Gx = 0;
-      Gy = 0;
-      Gz = 90;
-
       /*Publicar um tópico indicando que o usuário desativou o alrme de furto, para salvar no histórico.*/
       strcpy(temp, eventTime.c_str());
       sprintf(message, "{\"event\": \"Alarme falso para tentativa de furto\", \"schedule\": \"%s\"}", temp);
@@ -384,7 +366,8 @@ void loop() {
 
       /*Leitura do arquivo de histórico diário.*/
       readDailyHistoricFile();
-      
+
+      flagMonitoring = false;
       // Alarme falso!
     }
 
@@ -393,14 +376,6 @@ void loop() {
       flagTheft = false;
       
       digitalWrite(LED_BUILTIN, HIGH);
-
-      /*Restauração dos sensores para uma possível situação normal.*/
-      Ax = 300;
-      Ay = 300;
-      Az = 400;
-      Gx = 0;
-      Gy = 0;
-      Gz = 90;
 
       /*Publicar um tópico indicando que houve uma tentativa de furto, para salvar no histórico.*/
       strcpy(temp, eventTime.c_str());
@@ -419,6 +394,8 @@ void loop() {
 
       /*Leitura do arquivo de histórico diário.*/
       readDailyHistoricFile();
+
+      flagMonitoring = false;
     }
   }
   
@@ -599,10 +576,14 @@ void readDailyHistoricFile(){
   file = SPIFFS.open("dailyHistoric.txt", "r");
 
   if(file){
+    Serial.println("------------------ Histórico --------------------");
+    Serial.println();
     while(file.available()){
       fileData = file.readStringUntil('\n');
       Serial.println(fileData);
     }
+    Serial.println();
+    Serial.println("-------------------------------------------------");
 
     file.close();
   }
@@ -626,42 +607,42 @@ String getCurrentDate() {
 /*-- Função que recebe os valores dos sensores, e verifica se houve um furto ou um acidente. --*/
 void monitorSensors(int Ax, int Ay, int Az, int Gx, int Gy, int Gz){
   if(alarmMode){ /*Caso esteja ativado o alarme de furto.*/
-      if((Ax < 270 || Ax > 380) && (Ay < 270 || Ay > 380) && (Az < 360) && (Gx >= 10 || Gx <= -10) && (Gy < 0 || Gy >= 5)){ /*Caso ocorra uma tentativa de furto.*/
+      if((Ax < 270 || Ax > 380) && (Ay < 270 || Ay > 380) && (Az < 360) && (Gx >= 10 || Gx <= -10) && (Gy < 0 || Gy >= 5) && flagMonitoring){ /*Caso ocorra uma tentativa de furto.*/
         flagTheft = true;
         eventTime = localTime;
         desativationTime = (String) getScheduleWithInterval(INTERVAL_EVENT, eventTime);
       }
         
   } else { /*Caso esteja ativado o alarme de acidente.*/
-    if(Ay < 270 && Az < 360 && Gy > 20){
+    if(Ay < 270 && Az < 360 && Gy > 20 && flagMonitoring){
     flagAccident = true;
 
     eventTime = localTime;
     desativationTime = (String) getScheduleWithInterval(INTERVAL_EVENT, eventTime);
     
     //Tombou para a esquerda
-    } else if(Ay > 380 && Az < 360 && Gy < -20){
+    } else if(Ay > 380 && Az < 360 && Gy < -20 && flagMonitoring){
       flagAccident = true;
 
       eventTime = localTime;
       desativationTime = (String) getScheduleWithInterval(INTERVAL_EVENT, eventTime);
   
       //Tombou para a direita
-    } else if(Ax > 380 && Az < 360 && Gx > 30 && Gz < 0){
+    } else if(Ax > 380 && Az < 360 && Gx > 30 && Gz < 0 && flagMonitoring){
       flagAccident = true;
 
       eventTime = localTime;
       desativationTime = (String) getScheduleWithInterval(INTERVAL_EVENT, eventTime);
   
       //Tombou para trás
-    } else if(Ax < 270 && Az <360 && Gx < -20 && Gz < 0){
+    } else if(Ax < 270 && Az <360 && Gx < -20 && Gz < 0 && flagMonitoring){
       flagAccident = true;
 
       eventTime = localTime;
       desativationTime = (String) getScheduleWithInterval(INTERVAL_EVENT, eventTime);
   
       //Tombou para frente
-    } else if(Az < 300 && Gz < 0){
+    } else if(Az < 300 && Gz < 0 && flagMonitoring){
       flagAccident = true;
 
       eventTime = localTime;
