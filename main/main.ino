@@ -7,6 +7,8 @@
 
 #define button D3
 #define INTERVAL_EVENT "00h00m15s"
+#define Acelerometer_RANGE 4 /*Faixa: ± 2g*/
+#define Gyroscope_RANGE 500 /*Faixa: ± 250º/s*/
 
 String localTime; //Váriavel que armazenara o horario do NTP.
 char interval[15] = "00h00m15s"; //Intervalo padrão para a verificação de conexão.
@@ -28,15 +30,13 @@ int j = 0, k = 0; //Variáveis acumuladoras.
 
 /*Sensores: Acelerômetro (A) | Giroscópio (G)*/
 String sensor[6]; // (0) -> Ax | (1) -> Ay | (2) -> Az | (3) -> Gx | (4) -> Gy | (5) -> Gz
-int Ax, Ay, Az; //Valores do acelerômetro nos três eixos.
-int Gx, Gy, Gz; //Valores do giroscópio nos três eixos.
 
 WiFiUDP udp;//Cria um objeto "UDP".
 NTPClient ntp(udp, "b.ntp.br", -3 * 3600, 60000);//Cria um objeto "NTP" com as configurações.
 
 /*-- Credenciais do WiFi --*/
-const char* ssid = "Santos"; /*Nome da Rede WiFi*/
-const char* password = "salmos65"; /*Senha da Rede WiFi*/
+const char* ssid = "sanbel"; /*Nome da Rede WiFi*/
+const char* password = "sanbel09"; /*Senha da Rede WiFi*/
 
 /*-- Contatos de emergência previamente cadastrados pelo usuário. --*/
 String police = "190";
@@ -45,7 +45,7 @@ String ambulance = "192";
 WiFiUDP ntpUDP;
 NTPClient timeClient(ntpUDP, "pool.ntp.org");
 
-const char* AWS_endpoint = "agujconwx0aiu-ats.iot.us-east-1.amazonaws.com"; //Endpoint do dispositivo na AWS.
+const char* AWS_endpoint = "a1eb2rhzwlwckg-ats.iot.us-east-1.amazonaws.com"; //Endpoint do dispositivo na AWS.
 
 /*-- Função responsável pela comunicação da AWS IoT Core com a placa ESP8266 --*/
 void callback(char* topic, byte* payload, unsigned int length) {
@@ -202,7 +202,8 @@ void setup() {
 
   Serial.println(localTime);
 
-  
+//  File file = SPIFFS.open("dailyHistoric.txt", "w");
+//  file.close();
 }
 
 void loop() {
@@ -236,7 +237,7 @@ void loop() {
       }
 
       /*Chamando a função para verificar os valores dos sensores*/
-      monitorSensors(sensor[0].toInt(), sensor[1].toInt(), sensor[2].toInt(), sensor[3].toInt(), sensor[4].toInt(), sensor[5].toInt());
+      monitorSensors(sensor[0], sensor[1], sensor[2], sensor[3], sensor[4], sensor[5]);
       j = 0;
       
       /*Apagando os dados lidos do terminal.*/
@@ -530,41 +531,72 @@ void returnMessage(String message){
 /*-- Função para armazenar os eventos diários na placa --*/
 void storageHistoric(String schedule, String event){
   File file;
-  String currentDate;
-  String fileDate;
+  String currentDate; /*Data atual.*/
+  char *splitData; /*Utilizada para separar os dados que estão no arquivo por um delimitador.*/
+  LinkedList<String> dateList = LinkedList<String>(); /*Lista com as datas.*/
+  LinkedList<String> scheduleList = LinkedList<String>(); /*Lista com os horários.*/
+  LinkedList<String> eventList = LinkedList<String>(); /*Lista com os eventos.*/
+  int j = 0; /*Variável acumuladora.*/
+  char delimit[] = "-"; /*Delimitador que irá separar os dados.*/
+  char fileData[100]; /*Linha lida do arquivo.*/
 
+  /*Obtendo a data atual.*/
   currentDate = getCurrentDate();
 
   file = SPIFFS.open("dailyHistoric.txt", "r");
 
   if(file){
-    fileDate = file.readStringUntil('\n');
+    while(file.available()){
+      /*Lendo a linha do arquivo e convertendo para um vetor de caracteres.*/
+      file.readStringUntil('\n').toCharArray(fileData, 100);
+      /*Dividindo a String.*/
+      splitData = strtok(fileData, delimit);
+      /*Adicionando cada dado lido na sua lista correspondente.*/
+      while(splitData != NULL){
+        if(j == 0){
+          dateList.add(splitData); 
+        } else if(j == 1){
+          scheduleList.add(splitData);
+        } else if(j == 2){
+          eventList.add(splitData);
+        }
+
+        splitData = strtok(NULL, delimit);
+        j++;
+      }
+      j = 0;
+    }
+    
     file.close();
-  } else {
+
+    /*Adicionando os dados do evento atual nas suas listas correspondente.*/
+    dateList.add(currentDate);
+    scheduleList.add(schedule);
+    eventList.add(event);
+    
     file = SPIFFS.open("dailyHistoric.txt", "w");
 
-    file.printf("%s\n\n", currentDate.c_str());
+    for(int i = 0; i < eventList.size(); i++){
+      /*Removendo os dados que ultrapassaram o limite de 24 horas.*/
+      
+      if(localTime > scheduleList.get(i) && compareDate(currentDate, dateList.get(i)) == false){
+        dateList.remove(i);
+        scheduleList.remove(i);
+        eventList.remove(i);
+      } 
+    }
+    /*Escrevendo os dados das listas no arquivo.*/
+    for(int i = 0; i < eventList.size(); i++){
+      file.printf("%s-%s-%s\n", dateList.get(i).c_str(), scheduleList.get(i).c_str(), eventList.get(i).c_str());
+    }
 
     file.close();
-  }
-
-  if(fileDate == currentDate){
-    file = SPIFFS.open("dailyHistoric.txt", "a");
-
-    if(file){
-      file.printf("%s - %s\n", schedule.c_str(), event.c_str());
-
-      file.close();
-    }
-  } else {
+  } else { /*Caso o arquivo não exista, ele é criado com os dados do evento atual.*/
     file = SPIFFS.open("dailyHistoric.txt", "w");
 
-    if(file){
-      file.printf("%s\n\n", currentDate.c_str());
-      file.printf("%s - %s\n", schedule.c_str(), event.c_str());
+    file.printf("%s-%s-%s\n", currentDate.c_str(), schedule.c_str(), event.c_str());
 
-      file.close();
-    }
+    file.close();
   }
 }
 
@@ -580,6 +612,7 @@ void readDailyHistoricFile(){
     Serial.println();
     while(file.available()){
       fileData = file.readStringUntil('\n');
+      
       Serial.println(fileData);
     }
     Serial.println();
@@ -593,6 +626,8 @@ void readDailyHistoricFile(){
 String getCurrentDate() {
   /*Retorna número de segundos decorridos desde 1º de janeiro de 1970*/
   unsigned long epochTime = timeClient.getEpochTime();
+  epochTime -= 10800; /*Adequando o fuso horário para UTC-3.*/
+
   struct tm *ptm = gmtime ((time_t *)&epochTime); 
   
   int currentDay = ptm->tm_mday;
@@ -605,52 +640,167 @@ String getCurrentDate() {
 }
 
 /*-- Função que recebe os valores dos sensores, e verifica se houve um furto ou um acidente. --*/
-void monitorSensors(int Ax, int Ay, int Az, int Gx, int Gy, int Gz){
+void monitorSensors(String Ax, String Ay, String Az, String Gx, String Gy, String Gz){
+  int tempAccel[3]; /*Variável temporária para os valores dos sensores do acelerômetro.*/
+  int tempGyrosc[3]; /*Variável temporária para os valores dos sensores do giroscópio.*/
+  float Accel[3]; /*Valores dos sensores do acelerômetro representados em 8 bits.*/
+  float Gyrosc[3]; /*Valores dos sensores do giroscópio representados em 8 bits.*/
+  float AcelerometerSum; /*Soma dos 3 valores do acelerômetro.*/
+
+  /*Convertendo os valores para base 10.*/
+  if(Ax.length() == 2){
+    tempAccel[0] = String(Ax[0], DEC).toInt();
+    tempAccel[0] += String(Ax[1], DEC).toInt();
+  } else{
+    tempAccel[0] = String(Ax[0], DEC).toInt();
+  }
+  if(Ay.length() == 2){
+    tempAccel[1] = String(Ay[0], DEC).toInt();
+    tempAccel[1] += String(Ay[1], DEC).toInt();
+  } else{
+    tempAccel[1] = String(Ay[0], DEC).toInt();
+  }
+  if(Az.length() == 2){
+    tempAccel[2] = String(Az[0], DEC).toInt();
+    tempAccel[2] += String(Az[1], DEC).toInt();
+  } else{
+    tempAccel[2] = String(Az[0], DEC).toInt();
+  }
+  
+  if(Gx.length() == 2){
+    tempGyrosc[0] = String(Gx[0], DEC).toInt();
+    tempGyrosc[0] += String(Gx[1], DEC).toInt();
+  } else{
+    tempGyrosc[0] = String(Gx[0], DEC).toInt();
+  }
+  if(Gy.length() == 2){
+    tempGyrosc[1] = String(Gy[0], DEC).toInt();
+    tempGyrosc[1] += String(Gy[1], DEC).toInt();
+  } else{
+    tempGyrosc[1] = String(Gy[0], DEC).toInt();
+  }
+  if(Gz.length() == 2){
+    tempGyrosc[2] = String(Gz[0], DEC).toInt();
+    tempGyrosc[2] += String(Gz[1], DEC).toInt();
+  } else{
+    tempGyrosc[2] = String(Gz[0], DEC).toInt();
+  }
+
+  /*Atribuindo os valores convertidos da base 10 para uma representação de 8 bits.*/
+  for(int x = 0; x < 3; x++){
+    Accel[x] = convertToScaleAcelerometer(tempAccel[x]);
+    Gyrosc[x] = convertToScaleGyroscope(tempGyrosc[x]);
+  }
+
   if(alarmMode){ /*Caso esteja ativado o alarme de furto.*/
-      if((Ax < 270 || Ax > 380) && (Ay < 270 || Ay > 380) && (Az < 360) && (Gx >= 10 || Gx <= -10) && (Gy < 0 || Gy >= 5) && flagMonitoring){ /*Caso ocorra uma tentativa de furto.*/
+      if((Gyrosc[0] > 15.625 || Gyrosc[0] < -9.765625) || (Gyrosc[1] > 9.765625 || Gyrosc[1] < -9.765625) || (Gyrosc[2] > 99.609375 || Gyrosc[2] < 80.078125) || 
+      (Accel[0] < -0.125 || Accel[0] > 0.125) || (Accel[1] < -0.125 || Accel[1] > 0.125) || (Accel[2] > 1.125  || Accel[2] < 0.875) && flagMonitoring){
         flagTheft = true;
+        
         eventTime = localTime;
         desativationTime = (String) getScheduleWithInterval(INTERVAL_EVENT, eventTime);
-      }
-        
+
+      }    
   } else { /*Caso esteja ativado o alarme de acidente.*/
-    if(Ay < 270 && Az < 360 && Gy > 20 && flagMonitoring){
-    flagAccident = true;
+      AcelerometerSum = Accel[0] + Accel[1] + Accel[2];
 
-    eventTime = localTime;
-    desativationTime = (String) getScheduleWithInterval(INTERVAL_EVENT, eventTime);
-    
-    //Tombou para a esquerda
-    } else if(Ay > 380 && Az < 360 && Gy < -20 && flagMonitoring){
-      flagAccident = true;
+      /*Caso o giroscópio identifique alguma variação brusca em algum dos eixos.*/
+      if((Gyrosc[0] >= 46.875 || Gyrosc[0] <= -46.875 || Gyrosc[1] <= -50.78125 || Gyrosc[1] >= 70.3125 || Gyrosc[2] < 0) && flagMonitoring){
+          flagAccident = true;
 
-      eventTime = localTime;
-      desativationTime = (String) getScheduleWithInterval(INTERVAL_EVENT, eventTime);
-  
-      //Tombou para a direita
-    } else if(Ax > 380 && Az < 360 && Gx > 30 && Gz < 0 && flagMonitoring){
-      flagAccident = true;
+          eventTime = localTime;
+          desativationTime = (String) getScheduleWithInterval(INTERVAL_EVENT, eventTime);
+      }
+      /*Caso o acelerômetro identifique alguma variação brusca em algum dos eixos.*/
+      if((AcelerometerSum < -0.786944 || AcelerometerSum > 0.944182) && flagMonitoring){
+          flagAccident = true;
 
-      eventTime = localTime;
-      desativationTime = (String) getScheduleWithInterval(INTERVAL_EVENT, eventTime);
-  
-      //Tombou para trás
-    } else if(Ax < 270 && Az <360 && Gx < -20 && Gz < 0 && flagMonitoring){
-      flagAccident = true;
-
-      eventTime = localTime;
-      desativationTime = (String) getScheduleWithInterval(INTERVAL_EVENT, eventTime);
-  
-      //Tombou para frente
-    } else if(Az < 300 && Gz < 0 && flagMonitoring){
-      flagAccident = true;
-
-      eventTime = localTime;
-      desativationTime = (String) getScheduleWithInterval(INTERVAL_EVENT, eventTime);
-  
-      //Capotado
-    } 
+          eventTime = localTime;
+          desativationTime = (String) getScheduleWithInterval(INTERVAL_EVENT, eventTime);
+      }
   }
+
+}
+
+/*Função que converte os valores do acelerômetro de base 10 em uma representação de 8 bits.*/
+/*Faixa: ± 2g*/
+float convertToScaleAcelerometer(int number){
+  float delta = (float) Acelerometer_RANGE/256;
+  float conversion = (number - 127) * delta;
+  return conversion;
+}
+
+/*Função que converte os valores do giroscópio de base 10 em uma representação de 8 bits.*/
+/*Faixa: ± 250°/s*/
+float convertToScaleGyroscope(int number){
+  float delta = (float) Gyroscope_RANGE/256;
+  float conversion = (number - 127) * delta;
+  return conversion;
+}
+
+/*Função que compara a diferença entre as datas, retornando true quando a diferença for 0 ou 1 dias.*/
+boolean compareDate(String currentDate,String eventDate){
+  int dayDiff, monthDiff, yearDiff;
+  String temp = "",temp2 = "";
+
+  temp += currentDate[6];
+  temp += currentDate[7]; 
+  temp += currentDate[8];
+  temp += currentDate[9]; 
+  temp2 += eventDate[6];
+  temp2 += eventDate[7]; 
+  temp2 += eventDate[8];
+  temp2 += eventDate[9];
+  yearDiff = temp.toInt() - temp2.toInt();
+  if(yearDiff != 0){
+    return false;
+  }
+  temp = "";
+  temp2 = "";
+
+  if(currentDate[4] == '/'){
+    temp += "0";
+    temp += currentDate[3];
+  } else{
+    temp += currentDate[3];
+    temp += currentDate[4];
+  }
+  
+  if(eventDate[4] == '/'){
+    temp2 += "0";
+    temp2 += eventDate[3];
+  } else{
+    temp2 += eventDate[3];
+    temp2 += eventDate[4];
+  }
+  monthDiff = temp.toInt() - temp2.toInt();
+  if(monthDiff != 0){
+    return false;
+  }
+  temp = "";
+  temp2 = "";
+
+  if(currentDate[1] == '/'){
+    temp += "0";
+    temp += currentDate[0];
+  } else{
+    temp += currentDate[0];
+    temp += currentDate[1];
+  } 
+
+  if(eventDate[1] == '/'){
+    temp2 += "0";
+    temp2 += eventDate[0];
+  } else{
+    temp2 += eventDate[0];
+    temp2 += eventDate[1];
+  }
+  dayDiff = temp.toInt() - temp2.toInt();
+  if(dayDiff > 1 || dayDiff < 0){
+    return false;
+  }
+  
+  return true;
 }
 
 /*-- Função para alocar dinamicamente o tamanho da matriz --*/
