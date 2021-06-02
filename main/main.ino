@@ -4,6 +4,7 @@
 #include <NTPClient.h>
 #include <WiFiUdp.h>
 #include <LinkedList.h>
+#include "locale.h"
 
 #define button D3
 #define INTERVAL_EVENT "00h00m15s"
@@ -22,14 +23,13 @@ boolean alarmMode = false; //Modo do alarme (false = Acidente | true = Furto).
 boolean flagAccident = false; //Flag para indicar que ocorreu um acidente.
 boolean flagTheft = false; //Flag para indicar que ocorreu um furto
 boolean flagMonitoring = false; //Flag para indicar que os valores dos sensores mudaram.
+boolean isToday; //Flag para indica se o evento está na data atual ou a data anterior à atual.
 
 char character; //Caracteres do terminal.
-char terminalInput[35]; //Valores dos sensores obtidos pelo terminal.
-char delimiter[] = ","; //Delimitador para os valores dos sensores obtidos pelo terminal.
-int j = 0, k = 0; //Variáveis acumuladoras.
+int j = 0; //Variável acumuladora.
 
 /*Sensores: Acelerômetro (A) | Giroscópio (G)*/
-String sensor[6]; // (0) -> Ax | (1) -> Ay | (2) -> Az | (3) -> Gx | (4) -> Gy | (5) -> Gz
+char sensor[6]; // (0) -> Ax | (1) -> Ay | (2) -> Az | (3) -> Gx | (4) -> Gy | (5) -> Gz
 
 WiFiUDP udp;//Cria um objeto "UDP".
 NTPClient ntp(udp, "b.ntp.br", -3 * 3600, 60000);//Cria um objeto "NTP" com as configurações.
@@ -209,7 +209,6 @@ void setup() {
 void loop() {
   char message[100]; //Mensagem que será publicada.
   char temp[10]; //Variável temporária para a publicação.
-  char *sensorValue; //Valor do sensor.
   int btnVal = digitalRead(button); //Valor do botão.
 
   /*Horário atual.*/
@@ -221,34 +220,20 @@ void loop() {
 
   /*Recebendo os valores dos sensores via terminal.*/
   if(Serial.available()) {
+    
     character = Serial.read();
-    /*Valores dos sensores mudaram.*/
-    flagMonitoring = true;
+    sensor[j] = character;
+    j++;
 
-    if(character == 10){ /*Quando chegar no final da String*/
-      k = 0;
-      /*Dividindo a String.*/
-      sensorValue = strtok(terminalInput, delimiter);
-
-      while(sensorValue != NULL){
-        sensor[j] = sensorValue;
-        sensorValue = strtok(NULL, delimiter);
-        j++;
-      }
-
+    /* Após todos os caracteres. */
+    if(j == 6){
       /*Chamando a função para verificar os valores dos sensores*/
       monitorSensors(sensor[0], sensor[1], sensor[2], sensor[3], sensor[4], sensor[5]);
-      j = 0;
-      
-      /*Apagando os dados lidos do terminal.*/
-      for(int i = 0; i < 25; i++) {
-        terminalInput[i] = NULL;
-      }
-      
-    } else { /*Caso não seja o final da String, concatena os caracteres.*/
-      terminalInput[k] += character;
-      k++;
+      j = 0;  
     }
+    
+    /*Valores dos sensores mudaram.*/
+    flagMonitoring = true;
   }
 
   /*Salvar o horário para a publicação da verificação de conexão, quando a flag for verdadeira.*/
@@ -536,9 +521,11 @@ void storageHistoric(String schedule, String event){
   LinkedList<String> dateList = LinkedList<String>(); /*Lista com as datas.*/
   LinkedList<String> scheduleList = LinkedList<String>(); /*Lista com os horários.*/
   LinkedList<String> eventList = LinkedList<String>(); /*Lista com os eventos.*/
+  LinkedList<int> indexes = LinkedList<int>(); /*Lista com os índices que dos eventos válidos.*/
   int j = 0; /*Variável acumuladora.*/
   char delimit[] = "-"; /*Delimitador que irá separar os dados.*/
   char fileData[100]; /*Linha lida do arquivo.*/
+  
 
   /*Obtendo a data atual.*/
   currentDate = getCurrentDate();
@@ -578,16 +565,20 @@ void storageHistoric(String schedule, String event){
 
     for(int i = 0; i < eventList.size(); i++){
       /*Removendo os dados que ultrapassaram o limite de 24 horas.*/
+      if(compareDate(currentDate, dateList.get(i)) == true){
+        if(isToday && schedule > scheduleList.get(i)){
+          indexes.add(i);
+        } else if(isToday && schedule <= scheduleList.get(i)){
+          indexes.add(i);
+        } else if(!isToday && schedule <= scheduleList.get(i)){
+          indexes.add(i);
+        }
+      }
       
-      if(localTime > scheduleList.get(i) && compareDate(currentDate, dateList.get(i)) == false){
-        dateList.remove(i);
-        scheduleList.remove(i);
-        eventList.remove(i);
-      } 
     }
     /*Escrevendo os dados das listas no arquivo.*/
-    for(int i = 0; i < eventList.size(); i++){
-      file.printf("%s-%s-%s\n", dateList.get(i).c_str(), scheduleList.get(i).c_str(), eventList.get(i).c_str());
+    for(int i = 0; i < indexes.size(); i++){
+      file.printf("%s-%s-%s\n", dateList.get(indexes.get(i)).c_str(), scheduleList.get(indexes.get(i)).c_str(), eventList.get(indexes.get(i)).c_str());
     }
 
     file.close();
@@ -640,7 +631,7 @@ String getCurrentDate() {
 }
 
 /*-- Função que recebe os valores dos sensores, e verifica se houve um furto ou um acidente. --*/
-void monitorSensors(String Ax, String Ay, String Az, String Gx, String Gy, String Gz){
+void monitorSensors(char Ax, char Ay, char Az, char Gx, char Gy, char Gz){
   int tempAccel[3]; /*Variável temporária para os valores dos sensores do acelerômetro.*/
   int tempGyrosc[3]; /*Variável temporária para os valores dos sensores do giroscópio.*/
   float Accel[3]; /*Valores dos sensores do acelerômetro representados em 8 bits.*/
@@ -648,43 +639,18 @@ void monitorSensors(String Ax, String Ay, String Az, String Gx, String Gy, Strin
   float AcelerometerSum; /*Soma dos 3 valores do acelerômetro.*/
 
   /*Convertendo os valores para base 10.*/
-  if(Ax.length() == 2){
-    tempAccel[0] = String(Ax[0], DEC).toInt();
-    tempAccel[0] += String(Ax[1], DEC).toInt();
-  } else{
-    tempAccel[0] = String(Ax[0], DEC).toInt();
-  }
-  if(Ay.length() == 2){
-    tempAccel[1] = String(Ay[0], DEC).toInt();
-    tempAccel[1] += String(Ay[1], DEC).toInt();
-  } else{
-    tempAccel[1] = String(Ay[0], DEC).toInt();
-  }
-  if(Az.length() == 2){
-    tempAccel[2] = String(Az[0], DEC).toInt();
-    tempAccel[2] += String(Az[1], DEC).toInt();
-  } else{
-    tempAccel[2] = String(Az[0], DEC).toInt();
-  }
+  tempAccel[0] = String(Ax, DEC).toInt();
   
-  if(Gx.length() == 2){
-    tempGyrosc[0] = String(Gx[0], DEC).toInt();
-    tempGyrosc[0] += String(Gx[1], DEC).toInt();
-  } else{
-    tempGyrosc[0] = String(Gx[0], DEC).toInt();
-  }
-  if(Gy.length() == 2){
-    tempGyrosc[1] = String(Gy[0], DEC).toInt();
-    tempGyrosc[1] += String(Gy[1], DEC).toInt();
-  } else{
-    tempGyrosc[1] = String(Gy[0], DEC).toInt();
-  }
-  if(Gz.length() == 2){
-    tempGyrosc[2] = String(Gz[0], DEC).toInt();
-    tempGyrosc[2] += String(Gz[1], DEC).toInt();
-  } else{
-    tempGyrosc[2] = String(Gz[0], DEC).toInt();
-  }
+  tempAccel[1] = String(Ay, DEC).toInt();
+  
+  tempAccel[2] = String(Az, DEC).toInt();
+ 
+  tempGyrosc[0] = String(Gx, DEC).toInt();
+ 
+  tempGyrosc[1] = String(Gy, DEC).toInt();
+  
+  tempGyrosc[2] = String(Gz, DEC).toInt();
+  
 
   /*Atribuindo os valores convertidos da base 10 para uma representação de 8 bits.*/
   for(int x = 0; x < 3; x++){
@@ -742,15 +708,63 @@ float convertToScaleGyroscope(int number){
 boolean compareDate(String currentDate,String eventDate){
   int dayDiff, monthDiff, yearDiff;
   String temp = "",temp2 = "";
+  int bar[2], bar2[2]; 
+  int x = 0, index = 0;
 
-  temp += currentDate[6];
-  temp += currentDate[7]; 
-  temp += currentDate[8];
-  temp += currentDate[9]; 
-  temp2 += eventDate[6];
-  temp2 += eventDate[7]; 
-  temp2 += eventDate[8];
-  temp2 += eventDate[9];
+  while(x < 2){
+    if(currentDate[index] == '/'){
+      bar[x] = index;
+      x++;
+    }
+    index++;
+  }
+
+  x = 0;
+  index = 0;
+  while(x < 2){
+    if(eventDate[index] == '/'){
+      bar2[x] = index;
+      x++;
+    }
+    index++;
+  }
+
+  if(bar2[1] == 3){ //   x/x/xxxx
+    temp2 += eventDate[4];
+    temp2 += eventDate[5]; 
+    temp2 += eventDate[6];
+    temp2 += eventDate[7]; 
+  } else if(bar2[1] == 4 && (bar2[0] == 2 || bar2[0] == 1)){ //  xx/x/xxxx || x/xx/xxxx
+    temp2 += eventDate[5];
+    temp2 += eventDate[6]; 
+    temp2 += eventDate[7];
+    temp2 += eventDate[8]; 
+
+  } else if(bar2[1] == 5 && bar2[0] == 2){  //  xx/xx/xxxx
+    temp2 += eventDate[6];
+    temp2 += eventDate[7]; 
+    temp2 += eventDate[8];
+    temp2 += eventDate[9];
+  }
+  
+  if(bar[1] == 3){ //   x/x/xxxx
+    temp += currentDate[4];
+    temp += currentDate[5]; 
+    temp += currentDate[6];
+    temp += currentDate[7]; 
+  } else if(bar[1] == 4 && (bar[0] == 2 || bar[0] == 1)){ //  xx/x/xxxx || x/xx/xxxx
+    temp += currentDate[5];
+    temp += currentDate[6]; 
+    temp += currentDate[7];
+    temp += currentDate[8]; 
+
+  } else if(bar[1] == 5 && bar[0] == 2){  //  xx/xx/xxxx
+    temp += currentDate[6];
+    temp += currentDate[7]; 
+    temp += currentDate[8];
+    temp += currentDate[9];
+  }
+  
   yearDiff = temp.toInt() - temp2.toInt();
   if(yearDiff != 0){
     return false;
@@ -758,21 +772,30 @@ boolean compareDate(String currentDate,String eventDate){
   temp = "";
   temp2 = "";
 
-  if(currentDate[4] == '/'){
-    temp += "0";
+  if(bar2[1] == 3){ //   x/x/xxxx
+    temp2 += eventDate[2];
+  } else if(bar2[1] == 4 && bar2[0] == 2){ //  xx/x/xxxx
+    temp2 += eventDate[3];
+  } else if(bar2[1] == 4 && bar2[0] == 1){ //  x/xx/xxxx
+    temp2 += eventDate[2];
+    temp2 += eventDate[3];
+  } else if(bar2[1] == 5 && bar2[0] == 2){  //  xx/xx/xxxx
+    temp2 += eventDate[3];
+    temp2 += eventDate[4];
+  }
+
+  if(bar[1] == 3){ //   x/x/xxxx
+    temp += currentDate[2];
+  } else if(bar[1] == 4 && bar[0] == 2){ //  xx/x/xxxx
     temp += currentDate[3];
-  } else{
+  } else if(bar[1] == 4 && bar[0] == 1){ //  x/xx/xxxx
+    temp += currentDate[2];
+    temp += currentDate[3];
+  } else if(bar[1] == 5 && bar[0] == 2){  //  xx/xx/xxxx
     temp += currentDate[3];
     temp += currentDate[4];
   }
   
-  if(eventDate[4] == '/'){
-    temp2 += "0";
-    temp2 += eventDate[3];
-  } else{
-    temp2 += eventDate[3];
-    temp2 += eventDate[4];
-  }
   monthDiff = temp.toInt() - temp2.toInt();
   if(monthDiff != 0){
     return false;
@@ -780,26 +803,31 @@ boolean compareDate(String currentDate,String eventDate){
   temp = "";
   temp2 = "";
 
-  if(currentDate[1] == '/'){
-    temp += "0";
+  if(bar2[0] == 1){
+    temp2 += eventDate[0];
+  } else{
+    temp2 += eventDate[0];
+    temp2 += eventDate[1];
+  } 
+  
+  if(bar[0] == 1){
     temp += currentDate[0];
   } else{
     temp += currentDate[0];
     temp += currentDate[1];
   } 
 
-  if(eventDate[1] == '/'){
-    temp2 += "0";
-    temp2 += eventDate[0];
-  } else{
-    temp2 += eventDate[0];
-    temp2 += eventDate[1];
-  }
   dayDiff = temp.toInt() - temp2.toInt();
   if(dayDiff > 1 || dayDiff < 0){
     return false;
   }
-  
+
+  if(dayDiff == 0){
+    isToday = true;
+  } else if(dayDiff == 1){
+    isToday = false;
+  }
+   
   return true;
 }
 
