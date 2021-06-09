@@ -4,7 +4,6 @@
 #include <NTPClient.h>
 #include <WiFiUdp.h>
 #include <LinkedList.h>
-#include "locale.h"
 
 #define button D3
 #define INTERVAL_EVENT "00h00m15s"
@@ -66,8 +65,6 @@ void callback(char* topic, byte* payload, unsigned int length) {
     data = allocateMatrix(1, 10);
     /*Salvando os dados enviados na publicação na matriz.*/
     data = readPublicationMQTT(payload, length, data);
-
-    Serial.println(data[0]); //Apagar!
 
     if((strchr(data[0], 'h') != NULL && strchr(data[0], 'm') != NULL && strchr(data[0], 's') != NULL)){
       /*Alterando o valor do intervalo a partir do enviado pela publicação.*/
@@ -201,9 +198,6 @@ void setup() {
   localTime = ntp.getFormattedTime();
 
   Serial.println(localTime);
-
-//  File file = SPIFFS.open("dailyHistoric.txt", "w");
-//  file.close();
 }
 
 void loop() {
