@@ -34,8 +34,8 @@ WiFiUDP udp;//Cria um objeto "UDP".
 NTPClient ntp(udp, "b.ntp.br", -3 * 3600, 60000);//Cria um objeto "NTP" com as configurações.
 
 /*-- Credenciais do WiFi --*/
-const char* ssid = "sanbel"; /*Nome da Rede WiFi*/
-const char* password = "sanbel09"; /*Senha da Rede WiFi*/
+const char* ssid = "nomeDaRede"; /*Nome da Rede WiFi*/
+const char* password = "senhaDaRede"; /*Senha da Rede WiFi*/
 
 /*-- Contatos de emergência previamente cadastrados pelo usuário. --*/
 String police = "190";
@@ -44,7 +44,7 @@ String ambulance = "192";
 WiFiUDP ntpUDP;
 NTPClient timeClient(ntpUDP, "pool.ntp.org");
 
-const char* AWS_endpoint = "a1eb2rhzwlwckg-ats.iot.us-east-1.amazonaws.com"; //Endpoint do dispositivo na AWS.
+const char* AWS_endpoint = "seuEndpoint"; //Endpoint do dispositivo na AWS.
 
 /*-- Função responsável pela comunicação da AWS IoT Core com a placa ESP8266 --*/
 void callback(char* topic, byte* payload, unsigned int length) {
